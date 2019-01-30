@@ -129,7 +129,7 @@ export default class Guide extends Component {
         };
       } else {
         const parsed = this.DOMParser.parseFromString(response, 'text/html');
-        const mainContainer = parsed.getElementById(findHashPart) ? parsed.getElementById(findHashPart).nextElementSibling : false;
+        const mainContainer = parsed.getElementById(findHashPart) ? parsed.getElementById(findHashPart).nextElementSibling : null;
         contentObj = {
           text: mainContainer.getElementsByTagName('p')[0] ? mainContainer.getElementsByTagName('p')[0].textContent.trim() : 'FIX: no content found',
           example: 'no code example'
