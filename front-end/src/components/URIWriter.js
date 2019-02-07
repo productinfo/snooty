@@ -11,9 +11,9 @@ export default class URIWriter extends Component {
     super(props);
     this.state = {
       atlas: '',
-      atlasFormError: false,
       authSource: '',
       database: '',
+      env: '',
       hostlist: {
         host0: '',
       },
@@ -31,12 +31,15 @@ export default class URIWriter extends Component {
     const value = target.value;
     const { handleUpdateURIWriter } = this.props;
 
+    event.preventDefault();
+
     if (name === 'atlas') {
       this.setState(
         { [name]: value },
-        () => this.parseAtlasString(value, handleUpdateURIWriter)
+        () => this.parseAtlasString(target, value, handleUpdateURIWriter)
       );
     } else if (name.includes('host')) {
+      target.setCustomValidity(this.hostnameHasError(value));
       this.updateHostlist(name, value, handleUpdateURIWriter);
     } else {
       this.setState(
@@ -47,10 +50,14 @@ export default class URIWriter extends Component {
   }
 
   updateHostlist(name, value, callback) {
-    if (value === '' && Object.keys(this.state.hostlist).length > 0) {
+    if (value === '' && Object.keys(this.state.hostlist).length > 1) {
       let deletedState = Object.assign({}, this.state.hostlist);
       delete deletedState[name];
-      this.setState({ hostlist: deletedState });
+      this.setState({ hostlist: deletedState }, () => {
+          if (!this.hostnameHasError(value)) {
+            callback(this.state);
+          }
+      });
     } else {
       this.setState({
         hostlist:
@@ -60,7 +67,9 @@ export default class URIWriter extends Component {
           }
         },
         () => {
-          callback(this.state);
+          if (this.hostnameHasError(value) === '') {
+            callback(this.state);
+          }
           if (!Object.values(this.state.hostlist).includes('')) {
             const newKeyName = `host${this.counter++}`;
             this.setState({
@@ -76,25 +85,76 @@ export default class URIWriter extends Component {
     }
   }
 
-  clearURI(atlasFormError, callback) {
+  hostnameHasError(host) {
+    if (host === '') {
+      return '';
+    }
+
+    const parsed = (/^\s*([^:\s]+)(?::(\d+))?\s*$/).exec(host);
+    if (!parsed) {
+      return 'Invalid host format: must match the format "hostname:port"';
+    }
+
+    const port = parseInt(parsed[2], 10);
+    if (isNaN(port)) {
+      return 'Missing port: host must match the format "hostname:port"';
+    }
+
+    if (port > 65535) {
+      return 'Port number is too large';
+    }
+
+    return '';
+  }
+
+  atlasFormHasError(atlasString) {
+    if (atlasString === '') {
+      return '';
+    }
+
+    const re3dot4 = /(\S+):\/\/(\S+):(\S*)@(\S+)\/(\S+)\?(\S+)/;
+    if (atlasString.match(re3dot4)) {
+      return '';
+    }
+
+    const re3dot6 = /(\S+):\/\/(\S+):(\S*)@(\S+)\/([^\s?]+)\?/;
+    if (atlasString.match(re3dot6)) {
+      return '';
+    }
+
+    if (atlasString.indexOf(' --') > -1) {
+      return '';
+    }
+
+    return 'Connection string could not be parsed';
+  }
+
+  clearURI(callback) {
     this.setState({
-      atlasFormError: atlasFormError,
       authSource: '',
       database: '',
+      env: '',
       hostlist: {
         host0: '',
       },
       replicaSet: '',
+      ssl: '',
       username: '',
-    }, () => callback(this.state));
+    }, () => typeof callback === 'function' && callback(this.state));
   }
 
-  parseAtlasString(pastedValue, callback) {
+  parseAtlasString(target, pastedValue, callback) {
     const atlasString = pastedValue.replace(/[\n\r]+/g, '').trim();
+    const error = target.setCustomValidity(this.atlasFormHasError(atlasString));
+
+    if (!error) {
+      this.clearURI();
+    }
 
     if (atlasString.indexOf(' --') > -1) {
       return this.parseShell(atlasString, callback);
     }
+
     if (atlasString.startsWith('mongodb+srv')) {
       return this.parseTo3dot6(atlasString, callback);
     }
@@ -102,26 +162,20 @@ export default class URIWriter extends Component {
   }
 
   parseShell(atlasString, callback) {
-    // split out the mongo and parse the rest
     const splitOnSpace = atlasString.split(' ');
     let splitOnSpaceClusterEnv = splitOnSpace[1];
-    // get rid of double quotes
     splitOnSpaceClusterEnv = splitOnSpaceClusterEnv.replace(/"/g, '');
-    // get command line args
     this.parseOutShellParams(splitOnSpace, callback);
-    // get the cluster information
     this.parseOutEnvAndClusters(splitOnSpaceClusterEnv, callback);
 
-    // we need to define success
     return true;
   }
 
   parseTo3dot4(atlasString, callback) {
     const re = /(\S+):\/\/(\S+):(\S*)@(\S+)\/(\S+)\?(\S+)/;
     const matchesArray = atlasString.match(re);
-    const isEmptyString = atlasString === '';
     if (!matchesArray) {
-      this.clearURI(!isEmptyString, callback);
+      this.clearURI(callback);
       return;
     }
 
@@ -139,9 +193,8 @@ export default class URIWriter extends Component {
   parseTo3dot6(atlasString, callback) {
     const re = /(\S+):\/\/(\S+):(\S*)@(\S+)\/([^\s?]+)\?/;
     const matchesArray = atlasString.match(re);
-    const isEmptyString = atlasString === '';
     if (!matchesArray) {
-      this.clearURI(!isEmptyString, callback);
+      this.clearURI(callback);
       return;
     }
 
@@ -155,11 +208,9 @@ export default class URIWriter extends Component {
   }
 
   parseOutShellParams(splitOnSpace, callback) {
-    // go through all of the command line args, parse
     let params = {};
     for (let i = 0; i < splitOnSpace.length; i += 1) {
       if (splitOnSpace[i].startsWith('--')) {
-        // this is a key, if next val does not begin with --, its a value
         if (!splitOnSpace[i + 1].startsWith('--')) {
           let splitKey = splitOnSpace[i].replace('--', '');
           let splitValue = splitOnSpace[i + 1];
@@ -168,10 +219,13 @@ export default class URIWriter extends Component {
             splitKey = 'authSource';
           }
 
+          if (splitKey === 'password') {
+            continue;
+          }
+
           // sometimes the next string is another parameter,
           // ignore those as they are canned
           if (!splitValue.startsWith('--')) {
-            // get rid of brackets which can cause problems with our inline code
             splitValue = splitValue.replace('<', '').replace('>', '');
             params[splitKey] = splitValue;
           }
@@ -217,14 +271,16 @@ export default class URIWriter extends Component {
     const params = {};
     shellString.split('&').forEach(param => {
       const [key, value] = param.split('=');
-      params[key] = value;
+      if (key !== 'password') {
+        params[key] = value;
+      }
     });
     return params;
   }
 
   render() {
     const { templateType } = this.props;
-    const { atlasFormError, hostlist } = this.state;
+    const { hostlist } = this.state;
     const isAtlas = templateType.includes(TEMPLATE_TYPE_ATLAS);
 
     return (
@@ -232,14 +288,27 @@ export default class URIWriter extends Component {
         {isAtlas ? (
           <label className="mongodb-form__prompt">
             <span className="mongodb-form__label">Atlas Connection String</span>
-            <textarea
-              name="atlas"
-              type="text"
-              value={this.state.atlas}
-              onChange={this.handleInputChange}
-              rows="3"
-              style={{width: '100%'}}
-              className={`mongodb-form__input ${atlasFormError ? 'mongodb-form__status--invalid' : ''}`} />
+            <div style={{width: '100%'}}>
+              <textarea
+                name="atlas"
+                type="text"
+                value={this.state.atlas}
+                onChange={this.handleInputChange}
+                rows="3"
+                style={{width: '100%'}}
+                className="mongodb-form__input"
+                placeholder={`mongo "mongodb+srv://clustername.mongodb.net/test" --username user`}
+              />
+              <div
+                className={[
+                  'atlascontrols__status',
+                  'mongodb-form__status',
+                  this.atlasFormHasError(this.state.atlas) && 'mongodb-form__status--invalid',
+                ].join(' ')}
+              >
+                {this.atlasFormHasError(this.state.atlas)}
+              </div>
+            </div>
           </label>
         ) : (
           <React.Fragment>
@@ -250,7 +319,8 @@ export default class URIWriter extends Component {
                 type="text"
                 value={this.state.username}
                 onChange={this.handleInputChange}
-                className="mongodb-form__input" />
+                className="mongodb-form__input"
+              />
             </label>
             <label className="mongodb-form__prompt">
               <span className="mongodb-form__label">Database Name</span>
@@ -259,7 +329,8 @@ export default class URIWriter extends Component {
                 type="text"
                 value={this.state.database}
                 onChange={this.handleInputChange}
-                className="mongodb-form__input" />
+                className="mongodb-form__input"
+              />
             </label>
             {templateType === TEMPLATE_TYPE_REPLICA_SET && (
               <label className="mongodb-form__prompt">
@@ -269,7 +340,8 @@ export default class URIWriter extends Component {
                   type="text"
                   value={this.state.replicaSet}
                   onChange={this.handleInputChange}
-                  className="mongodb-form__input" />
+                  className="mongodb-form__input"
+                />
               </label>
             )}
             <label className="mongodb-form__prompt">
@@ -279,20 +351,35 @@ export default class URIWriter extends Component {
                 type="text"
                 value={this.state.authSource}
                 onChange={this.handleInputChange}
-                className="mongodb-form__input" />
+                className="mongodb-form__input"
+              />
             </label>
             <label className="mongodb-form__prompt">
               <span className="mongodb-form__label">Servers</span>
-              <div style={{display: 'flex', flexDirection: 'column'}}>
-              {Object.entries(hostlist).map(([key, value]) => (
-                <input
-                  name={key}
-                  key={key}
-                  type="text"
-                  value={hostlist[key]}
-                  onChange={this.handleInputChange}
-                  className="mongodb-form__input" />
-              ))}
+              <div id="hostlist">
+              {Object.entries(hostlist).map(([key, value], index) => {
+                const error = this.hostnameHasError(value);
+                return (
+                  <React.Fragment key={index}>
+                    <input
+                      name={key}
+                      type="text"
+                      value={hostlist[key]}
+                      onChange={this.handleInputChange}
+                      className="mongodb-form__input"
+                      placeholder="localhost:27017"
+                    />
+                    <div
+                      className={[
+                        'mongodb-form__status',
+                        error && 'mongodb-form__status--invalid',
+                      ].join(' ')}
+                    >
+                      {error}
+                    </div>
+                  </React.Fragment>
+                );
+              })}
               </div>
             </label>
           </React.Fragment>

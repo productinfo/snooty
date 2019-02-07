@@ -12,7 +12,7 @@ export default class GuideSection extends Component {
       showStepper: false,
       showAllStepsText: 'Expand All Steps',
       showStepIndex: 0,
-      templateType: 'Atlas (Cloud) v. 3.6',
+      templateType: 'Atlas (Cloud)',
       totalStepsInProcedure: 1,
       uri: {},
     };  
